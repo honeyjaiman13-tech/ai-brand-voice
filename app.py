@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import re
 from sklearn.feature_extraction.text import CountVectorizer
-import google.generativeai as genai
+from google import genai
 
 # Page Configuration
 st.set_page_config(page_title="AI Brand Voice Generator", layout="wide")
@@ -22,7 +22,19 @@ if "history" not in st.session_state:
 with st.sidebar:
     st.header("Configuration")
     api_key = st.text_input("Gemini API Key:", type="password", help="Enter Key from Google AI Studio")
-    selected_model = st.selectbox("Select Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
+    
+    # Auto-detect available models for this specific API Key
+    available_models = ["gemini-2.5-flash", "gemini-2.5-pro"]
+    if api_key:
+        try:
+            client = genai.Client(api_key=api_key)
+            fetched = [m.name.replace("models/", "") for m in client.models.list() if "generateContent" in (m.supported_actions or [])]
+            if fetched:
+                available_models = fetched
+        except Exception:
+            pass
+
+    selected_model = st.selectbox("Select Model", available_models)
     st.divider()
     st.caption("Built for NASSCOM x Google Cloud Program")
 
@@ -88,10 +100,9 @@ with col2:
             st.warning("Please complete all required fields (*).")
         else:
             try:
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel(selected_model)
+                client = genai.Client(api_key=api_key)
                 prompt = f"""
-                You are a Brand Strategist.
+                You are an expert Brand Strategist.
                 Brand Name: {brand_name}
                 Industry: {industry}
                 Target Audience: {target_audience}
@@ -101,7 +112,10 @@ with col2:
                 Task: Generate 2 high-converting variations of a {content_type}. Strictly match the brand's tone, rhythm, and vocabulary.
                 """
                 with st.spinner("Generating copy via Gemini..."):
-                    res = model.generate_content(prompt)
+                    res = client.models.generate_content(
+                        model=selected_model,
+                        contents=prompt
+                    )
                     
                 st.session_state.generated_content = res.text
                 st.session_state.history.append({"type": content_type, "output": res.text})
@@ -118,11 +132,13 @@ with tab3:
         refine_instruction = st.text_input("Enter refinement instruction (e.g., 'Make it shorter and punchy'):")
         if st.button("Apply Refinement"):
             if api_key:
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel(selected_model)
+                client = genai.Client(api_key=api_key)
                 refine_prompt = f"Original: {st.session_state.generated_content}\n\nFeedback: {refine_instruction}\n\nRewrite adhering to original brand voice."
                 with st.spinner("Refining..."):
-                    res = model.generate_content(refine_prompt)
+                    res = client.models.generate_content(
+                        model=selected_model,
+                        contents=refine_prompt
+                    )
                     st.session_state.generated_content = res.text
                     st.rerun()
     st.divider()
