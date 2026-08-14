@@ -25,7 +25,7 @@ with st.sidebar:
     api_key = st.text_input("Gemini API Key:", type="password", help="Enter Key from Google AI Studio")
     selected_model = st.selectbox(
         "Select Model",
-        ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"]
+        ["gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-1.5-flash"]
     )
     st.divider()
     st.caption("Built for NASSCOM x Google Cloud Program")
