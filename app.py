@@ -3,14 +3,15 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import re
+import requests
+import json
 from sklearn.feature_extraction.text import CountVectorizer
-from google import genai
 
 # Page Configuration
 st.set_page_config(page_title="AI Brand Voice Generator", layout="wide")
 
 st.title("AI Brand Voice Generator")
-st.caption("Powered by Google Gemini and Streamlit")
+st.caption("Powered by Google Gemini & Streamlit")
 
 # Session State Setup
 if "generated_content" not in st.session_state:
@@ -22,24 +23,48 @@ if "history" not in st.session_state:
 with st.sidebar:
     st.header("Configuration")
     api_key = st.text_input("Gemini API Key:", type="password", help="Enter Key from Google AI Studio")
-    
-    # Auto-detect available models for this specific API Key
-    available_models = ["gemini-2.5-flash", "gemini-2.5-pro"]
-    if api_key:
-        try:
-            client = genai.Client(api_key=api_key)
-            fetched = [m.name.replace("models/", "") for m in client.models.list() if "generateContent" in (m.supported_actions or [])]
-            if fetched:
-                available_models = fetched
-        except Exception:
-            pass
-
-    selected_model = st.selectbox("Select Model", available_models)
+    selected_model = st.selectbox(
+        "Select Model",
+        ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-flash"]
+    )
     st.divider()
     st.caption("Built for NASSCOM x Google Cloud Program")
 
+# Helper function to call Gemini API reliably via REST API
+def call_gemini_api(prompt_text, key, model_name):
+    clean_model = model_name.replace("models/", "")
+    
+    # Primary Google GenAI endpoint
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent?key={key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {
+                "parts": [{"text": prompt_text}]
+            }
+        ]
+    }
+    
+    resp = requests.post(url, headers=headers, json=payload)
+    data = resp.json()
+    
+    if resp.status_code != 200:
+        # Fallback to general endpoint if specific version 404s
+        alt_url = f"https://generativelanguage.googleapis.com/v1/models/{clean_model}:generateContent?key={key}"
+        alt_resp = requests.post(alt_url, headers=headers, json=payload)
+        if alt_resp.status_code == 200:
+            data = alt_resp.json()
+        else:
+            err_msg = data.get("error", {}).get("message", resp.text)
+            raise Exception(f"API Error ({resp.status_code}): {err_msg}")
+            
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise Exception(f"Unexpected response format: {json.dumps(data)}")
+
 # UI Tabs
-tab1, tab2, tab3 = st.tabs(["Generator Workspace", "Brand Analytics", "History and Refinement"])
+tab1, tab2, tab3 = st.tabs(["Generator Workspace", "Brand Analytics", "History & Refinement"])
 
 with tab1:
     col1, col2 = st.columns(2)
@@ -99,26 +124,22 @@ with col2:
         elif not brand_name or not industry or not sample_text:
             st.warning("Please complete all required fields (*).")
         else:
+            prompt = f"""
+            You are an expert Brand Strategist.
+            Brand Name: {brand_name}
+            Industry: {industry}
+            Target Audience: {target_audience}
+            Extracted Keywords: {', '.join(top_keywords)}
+            Reference Tone/Style: "{sample_text}"
+            
+            Task: Generate 2 high-converting variations of a {content_type}. Strictly match the brand's tone, rhythm, and vocabulary.
+            """
             try:
-                client = genai.Client(api_key=api_key)
-                prompt = f"""
-                You are an expert Brand Strategist.
-                Brand Name: {brand_name}
-                Industry: {industry}
-                Target Audience: {target_audience}
-                Extracted Keywords: {', '.join(top_keywords)}
-                Reference Tone/Style: "{sample_text}"
-                
-                Task: Generate 2 high-converting variations of a {content_type}. Strictly match the brand's tone, rhythm, and vocabulary.
-                """
-                with st.spinner("Generating copy via Gemini..."):
-                    res = client.models.generate_content(
-                        model=selected_model,
-                        contents=prompt
-                    )
+                with st.spinner("Generating copy via Gemini API..."):
+                    result_text = call_gemini_api(prompt, api_key.strip(), selected_model)
                     
-                st.session_state.generated_content = res.text
-                st.session_state.history.append({"type": content_type, "output": res.text})
+                st.session_state.generated_content = result_text
+                st.session_state.history.append({"type": content_type, "output": result_text})
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -132,15 +153,14 @@ with tab3:
         refine_instruction = st.text_input("Enter refinement instruction (e.g., 'Make it shorter and punchy'):")
         if st.button("Apply Refinement"):
             if api_key:
-                client = genai.Client(api_key=api_key)
-                refine_prompt = f"Original: {st.session_state.generated_content}\n\nFeedback: {refine_instruction}\n\nRewrite adhering to original brand voice."
-                with st.spinner("Refining..."):
-                    res = client.models.generate_content(
-                        model=selected_model,
-                        contents=refine_prompt
-                    )
-                    st.session_state.generated_content = res.text
-                    st.rerun()
+                refine_prompt = f"Original Copy:\n{st.session_state.generated_content}\n\nInstruction: {refine_instruction}\n\nTask: Rewrite and adhere strictly to the original brand voice."
+                try:
+                    with st.spinner("Refining copy..."):
+                        refined_text = call_gemini_api(refine_prompt, api_key.strip(), selected_model)
+                        st.session_state.generated_content = refined_text
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
     st.divider()
     st.subheader("Session History")
     for item in reversed(st.session_state.history):
